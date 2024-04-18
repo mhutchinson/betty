@@ -90,40 +90,6 @@ func main() {
 	}
 }
 
-/*
-	// Config lib
-
-	eg, _ := errgroup.WithContext(ctx)
-
-	for i := 0; i < *numWriters; i++ {
-		eg.Go(func() error {
-			d := time.Second / time.Duration((*leavesPerSecond/2.0)+rand.Int63n(*leavesPerSecond)/2)
-			for {
-				time.Sleep(d)
-				e := newLeaf()
-				// submit leaf
-				n := time.Now()
-				_, err := s.Sequence(ctx, e)
-				if err != nil {
-					klog.Infof("Error adding leaf: %v", err)
-					continue
-				}
-				l.Add(time.Since(n))
-			}
-		})
-	}
-	eg.Wait()
-}
-
-func newLeaf() []byte {
-	r := make([]byte, *leafSize)
-	if _, err := rand.Read(r); err != nil {
-		panic(err)
-	}
-	return r
-}
-*/
-
 func printStats(ctx context.Context, s *posix.Storage, l *latency) {
 	interval := time.Second
 	var lastCP *f_log.Checkpoint
@@ -144,6 +110,5 @@ func printStats(ctx context.Context, s *posix.Storage, l *latency) {
 			lastCP = cp
 
 		}
-
 	}
 }
