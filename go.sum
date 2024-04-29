@@ -1,0 +1,14 @@
+github.com/go-logr/logr v1.4.1 h1:pKouT5E8xu9zeFC39JXRDukb6JFQPXM5p5I91188VAQ=
+github.com/go-logr/logr v1.4.1/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
+github.com/transparency-dev/formats v0.0.0-20240423084338-64421b3cb205 h1:GxNsQiehNuq8mb/uS3IGY15a/SceU/7f8h/JSfT0Y1A=
+github.com/transparency-dev/formats v0.0.0-20240423084338-64421b3cb205/go.mod h1:tyFqZYwVHIv/ap0obDip//541gI2TL7SwuWkhlg5WXc=
+github.com/transparency-dev/merkle v0.0.2 h1:Q9nBoQcZcgPamMkGn7ghV8XiTZ/kRxn1yCG81+twTK4=
+github.com/transparency-dev/merkle v0.0.2/go.mod h1:pqSy+OXefQ1EDUVmAJ8MUhHB9TXGuzVAT58PqBoHz1A=
+github.com/transparency-dev/serverless-log v0.0.0-20240426100149-9e45ea848357 h1:Dkem/w6NH0/seD4RJdKI+9ihHHCDYY8xBs5bDGFdk18=
+github.com/transparency-dev/serverless-log v0.0.0-20240426100149-9e45ea848357/go.mod h1:zjvuqnxFUNJd9DuBufOspRrWKqtvmk559YDGvU5m0Yg=
+golang.org/x/mod v0.17.0 h1:zY54UmvipHiNd+pm+m0x9KhZ9hl1/7QNMyxXbc6ICqA=
+golang.org/x/mod v0.17.0/go.mod h1:hTbmBsO62+eylJbnUtE2MGJUyE7QWk4xUqPFrRgJ+7c=
+k8s.io/klog v1.0.0 h1:Pt+yjF5aB1xDSVbau4VsWe+dQNzA0qv1LlXdC2dF6Q8=
+k8s.io/klog v1.0.0/go.mod h1:4Bi6QPql/J/LkTDqv7R/cd3hPo4k2DG6Ptcz060Ez5I=
+k8s.io/klog/v2 v2.120.1 h1:QXU6cPEOIslTGvZaXvFWiP9VKyeet3sawzTOvdXb4Vw=
+k8s.io/klog/v2 v2.120.1/go.mod h1:3Jpz1GvMt720eyJH1ckRHK1EDfpxISzJ7I9OYgaDtPE=
