@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,9 +21,9 @@ import (
 )
 
 var (
-	path        = flag.String("path", "/tmp/log", "Path to log root diretory")
-	batchSize   = flag.Int("batch_size", 1, "Size of batch before flushing")
-	batchMaxAge = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
+	sqlConnString = flag.String("mysql_uri", "user:password@tcp(db:3306)/litelog", "Connection string for a MySQL database")
+	batchSize     = flag.Int("batch_size", 1, "Size of batch before flushing")
+	batchMaxAge   = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 
 	listen = flag.String("listen", ":2024", "Address:port to listen on")
 
@@ -76,20 +79,21 @@ func main() {
 	ctx := context.Background()
 
 	sKey, vKey := keysFromFlag()
-	ct := currentTree(*path, vKey)
-	nt := newTree(*path, sKey)
+	parse := parseCheckpoint(vKey)
+	create := newTree(sKey)
+	s := tsql.New(*sqlConnString, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, parse, create)
 
-	if err := os.MkdirAll(*path, 0o755); err != nil {
-		klog.Exitf("failed to make directory structure: %v", err)
-	}
-	if _, _, err := ct(); err != nil {
+	if _, err := s.ReadCheckpoint(); err != nil {
 		klog.Infof("ct: %v", err)
-		if err := nt(0, []byte("Empty")); err != nil {
+		if cp, err := create(0, []byte("Empty")); err != nil {
 			klog.Exitf("Failed to initialise log: %v", err)
+		} else {
+			if err := s.WriteCheckpoint(ctx, cp); err != nil {
+				klog.Exitf("Failed to write initial checkpoint: %v", err)
+			}
 		}
 	}
 
-	s := tsql.New(*path, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, ct, nt)
 	l := &latency{}
 
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
@@ -110,45 +114,129 @@ func main() {
 		}
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 	})
-	fs := http.FileServer(http.Dir(*path))
-	http.Handle("GET /", fs)
+	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
+		klog.V(2).Info("Getting checkpoint")
+		cp, err := s.ReadCheckpoint()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Write(cp)
+	})
+	http.HandleFunc("GET /tile/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		path := r.PathValue("path")
+		level, index, partial, err := parseTilePath(path)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(fmt.Sprintf("Failed to parse tile path: %v", err)))
+			return
+		}
+		klog.V(2).Infof("Getting tile level=%d, index=%d (partial=%d)", level, index, partial)
 
-	go printStats(ctx, ct, l)
+		tile, err := s.GetTile(r.Context(), level, index)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
+			return
+		}
+		b, err := tile.MarshalText()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
+			return
+		}
+		w.Write(b)
+	})
+	http.HandleFunc("GET /seq/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		path := "/" + r.PathValue("path")
+		if path[0] != os.PathSeparator || path[3] != os.PathSeparator || path[6] != os.PathSeparator || path[9] != os.PathSeparator || path[12] != os.PathSeparator {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("Failed to parse seq path"))
+			return
+		}
+		var b strings.Builder
+		for _, s := range []string{path[1:3], path[4:6], path[7:9], path[10:12], path[13:]} {
+			b.WriteString(s)
+		}
+		index, err := strconv.ParseUint(b.String(), 16, 64)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("Failed to parse seq path"))
+			return
+		}
+		klog.V(2).Infof("Getting leaf index=%d", index)
+
+		tile, err := s.GetEntryBundle(r.Context(), index)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
+			return
+		}
+		w.Write(tile)
+	})
+
+	// go printStats(ctx, s, parse, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)
 	}
 }
 
-func currentTree(path string, verifier note.Verifier) tsql.CurrentTreeFunc {
-	return func() (uint64, []byte, error) {
-		b, err := tsql.ReadCheckpoint(path)
-		if err != nil {
-			return 0, nil, fmt.Errorf("ReadCheckpoint: %v", err)
+// parseTilePath is the opposite of layout.TilePath().
+func parseTilePath(path string) (level, index, partialTileSize uint64, err error) {
+	parts := strings.Split(path, "/")
+	if len(parts) != 5 {
+		return 0, 0, 0, fmt.Errorf("Malformed path: %v", path)
+	}
+	// parse level
+	t := new(big.Int)
+	if _, ok := t.SetString(parts[0], 16); !ok {
+		return 0, 0, 0, fmt.Errorf("Malformed level: %v", parts[0])
+	}
+	level = t.Uint64()
+
+	// parse partial tile
+	lastParts := strings.Split(parts[4], ".")
+	if len(lastParts) > 2 {
+		return 0, 0, 0, fmt.Errorf("Malformed final part: %v", parts[4])
+	}
+	parts[4] = lastParts[0]
+	if len(lastParts) == 2 {
+		if _, ok := t.SetString(lastParts[1], 16); !ok {
+			return 0, 0, 0, fmt.Errorf("Malformed final part: %v", parts[4])
 		}
-		cp, _, _, err := f_log.ParseCheckpoint(b, verifier.Name(), verifier)
+		partialTileSize = t.Uint64()
+	}
+	// parse index
+	indexStr := strings.Join(parts[1:5], "")
+	if _, ok := t.SetString(indexStr, 16); !ok {
+		return 0, 0, 0, fmt.Errorf("Malformed index: %v", indexStr)
+	}
+	index = t.Uint64()
+	return level, index, partialTileSize, nil
+}
+
+func parseCheckpoint(verifier note.Verifier) tsql.ParseCheckpointFunc {
+	return func(raw []byte) (uint64, error) {
+		cp, _, _, err := f_log.ParseCheckpoint(raw, verifier.Name(), verifier)
 		if err != nil {
-			return 0, nil, err
+			return 0, err
 		}
-		return cp.Size, cp.Hash, nil
+		return cp.Size, nil
 	}
 }
 
-func newTree(path string, signer note.Signer) tsql.NewTreeFunc {
-	return func(size uint64, hash []byte) error {
+func newTree(signer note.Signer) tsql.CreateCheckpointFunc {
+	return func(size uint64, hash []byte) ([]byte, error) {
 		cp := &f_log.Checkpoint{
 			Origin: signer.Name(),
 			Size:   size,
 			Hash:   hash,
 		}
-		n, err := note.Sign(&note.Note{Text: string(cp.Marshal())}, signer)
-		if err != nil {
-			return err
-		}
-		return tsql.WriteCheckpoint(path, n)
+		return note.Sign(&note.Note{Text: string(cp.Marshal())}, signer)
 	}
 }
 
-func printStats(ctx context.Context, s tsql.CurrentTreeFunc, l *latency) {
+func printStats(ctx context.Context, s *tsql.Storage, parse tsql.ParseCheckpointFunc, l *latency) {
 	interval := time.Second
 	var lastSize uint64
 	for {
@@ -156,10 +244,14 @@ func printStats(ctx context.Context, s tsql.CurrentTreeFunc, l *latency) {
 		case <-ctx.Done():
 			return
 		case <-time.After(interval):
-			size, _, err := s()
+			raw, err := s.ReadCheckpoint()
 			if err != nil {
 				klog.Errorf("Failed to get checkpoint: %v", err)
 				continue
+			}
+			size, err := parse(raw)
+			if err != nil {
+				klog.Errorf("Failed to parse checkpoint: %v", err)
 			}
 			if lastSize > 0 {
 				added := size - lastSize

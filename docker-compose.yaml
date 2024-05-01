@@ -1,0 +1,32 @@
+services:
+  db:
+    image: mysql:8.4.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    healthcheck:
+      test: mysql --user=$$MYSQL_USER --password=$$MYSQL_PASSWORD --silent --execute "SHOW DATABASES;"
+      interval: 3s
+      timeout: 2s
+      retries: 5
+    ports:
+      - "42006:3306"
+
+  logserver:
+    build: 
+      context: .
+      dockerfile: ./Dockerfile
+    command: [
+      "--alsologtostderr",
+      "--v=2",
+      "--mysql_uri=${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(db:3306)/${MYSQL_DATABASE}",
+    ]
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "42024:2024"

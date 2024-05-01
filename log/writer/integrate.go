@@ -31,12 +31,10 @@ import (
 // IntegrateStorage represents the set of functions needed by the integrate function.
 type IntegrateStorage interface {
 	// GetTile returns the tile at the given level & index.
-	GetTile(ctx context.Context, level, index, logSize uint64) (*api.Tile, error)
+	GetTile(ctx context.Context, level, index uint64) (*api.Tile, error)
 
 	// StoreTile stores the tile at the given level & index.
 	StoreTile(ctx context.Context, level, index uint64, tile *api.Tile) error
-
-	GetEntryBundle(ctx context.Context, index uint64, size uint64) ([]byte, error)
 }
 
 var (
@@ -53,7 +51,7 @@ var (
 // Returns an updated Checkpoint, or an error.
 func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st IntegrateStorage, h merkle.LogHasher) (uint64, []byte, error) {
 	getTile := func(l, i uint64) (*api.Tile, error) {
-		return st.GetTile(ctx, l, i, fromSize)
+		return st.GetTile(ctx, l, i)
 	}
 
 	hashes, err := client.FetchRangeNodes(ctx, fromSize, func(_ context.Context, l, i uint64) (*api.Tile, error) {
@@ -108,7 +106,7 @@ func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integrat
 
 	// All calculation is now complete, all that remains is to store the new
 	// tiles and updated log state.
-	klog.V(1).Infof("New log state: size 0x%x hash: %x", baseRange.End(), newRoot)
+	klog.V(1).Infof("New log state: size %d hash: %x", baseRange.End(), newRoot)
 
 	for k, t := range tc.m {
 		if err := st.StoreTile(ctx, k.level, k.index, t); err != nil {
