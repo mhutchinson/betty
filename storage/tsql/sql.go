@@ -37,8 +37,8 @@ func New(connection string, params log.Params, batchMaxAge time.Duration, parseC
 		panic(err)
 	}
 	db.SetConnMaxLifetime(time.Minute * 3)
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(8)
+	db.SetMaxOpenConns(64)
+	db.SetMaxIdleConns(64)
 	if err := db.Ping(); err != nil {
 		panic(err)
 	}
@@ -158,7 +158,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if err := tx.Commit(); err != nil {
 		return 0, 0, err
 	}
-	klog.V(1).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
+	klog.V(2).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
 	return size, idealNexBatch, nil
 }
 

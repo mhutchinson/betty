@@ -117,6 +117,7 @@ func main() {
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
 		cp, err := s.ReadCheckpoint()
 		if err != nil {
+			klog.Errorf("/checkpoint: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -132,12 +133,14 @@ func main() {
 		}
 		tile, err := s.GetTile(r.Context(), level, index)
 		if err != nil {
+			klog.Errorf("/tile/%s: %v", path, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
 			return
 		}
 		b, err := tile.MarshalText()
 		if err != nil {
+			klog.Errorf("/tile/%s: %v", path, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
 			return
@@ -163,6 +166,7 @@ func main() {
 		}
 		tile, err := s.GetEntryBundle(r.Context(), index)
 		if err != nil {
+			klog.Errorf("/seq%s (%d): %v", path, index, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
 			return
