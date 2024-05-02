@@ -115,7 +115,6 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
 	})
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
-		klog.V(2).Info("Getting checkpoint")
 		cp, err := s.ReadCheckpoint()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -125,14 +124,12 @@ func main() {
 	})
 	http.HandleFunc("GET /tile/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		path := r.PathValue("path")
-		level, index, partial, err := parseTilePath(path)
+		level, index, _, err := parseTilePath(path)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte(fmt.Sprintf("Failed to parse tile path: %v", err)))
 			return
 		}
-		klog.V(2).Infof("Getting tile level=%d, index=%d (partial=%d)", level, index, partial)
-
 		tile, err := s.GetTile(r.Context(), level, index)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -164,8 +161,6 @@ func main() {
 			w.Write([]byte("Failed to parse seq path"))
 			return
 		}
-		klog.V(2).Infof("Getting leaf index=%d", index)
-
 		tile, err := s.GetEntryBundle(r.Context(), index)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -175,7 +170,7 @@ func main() {
 		w.Write(tile)
 	})
 
-	// go printStats(ctx, s, parse, l)
+	go printStats(ctx, s, parse, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)
 	}
@@ -255,7 +250,7 @@ func printStats(ctx context.Context, s *tsql.Storage, parse tsql.ParseCheckpoint
 			}
 			if lastSize > 0 {
 				added := size - lastSize
-				klog.Infof("CP size %d (+%d); Latency: %v", size, added, l.String())
+				klog.Infof("CP size %d (+%d); Latency: %v. DB stats: %s", size, added, l.String(), s.String())
 			}
 			lastSize = size
 		}

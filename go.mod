@@ -8,7 +8,6 @@ require (
 	github.com/transparency-dev/merkle v0.0.2
 	github.com/transparency-dev/serverless-log v0.0.0-20240426100149-9e45ea848357
 	golang.org/x/mod v0.17.0
-	k8s.io/klog v1.0.0
 	k8s.io/klog/v2 v2.120.1
 )
 

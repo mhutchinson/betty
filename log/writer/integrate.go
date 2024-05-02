@@ -73,13 +73,13 @@ func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integrat
 		return 0, nil, fmt.Errorf("invalid log state, unable to recalculate root: %w", err)
 	}
 
-	klog.V(1).Infof("Loaded state with roothash %x", r)
+	klog.V(2).Infof("Loaded state with roothash %x", r)
 
 	// Create a new compact range which represents the update to the tree
 	newRange := rf.NewEmptyRange(fromSize)
 	tc := tileCache{m: make(map[tileKey]*api.Tile), getTile: getTile}
 	if len(batch) == 0 {
-		klog.V(1).Infof("Nothing to do.")
+		klog.V(2).Infof("Nothing to do.")
 		// Nothing to do, nothing done.
 		return fromSize, r, nil
 	}
@@ -106,7 +106,7 @@ func Integrate(ctx context.Context, fromSize uint64, batch [][]byte, st Integrat
 
 	// All calculation is now complete, all that remains is to store the new
 	// tiles and updated log state.
-	klog.V(1).Infof("New log state: size %d hash: %x", baseRange.End(), newRoot)
+	klog.V(2).Infof("New log state: size %d hash: %x", baseRange.End(), newRoot)
 
 	for k, t := range tc.m {
 		if err := st.StoreTile(ctx, k.level, k.index, t); err != nil {

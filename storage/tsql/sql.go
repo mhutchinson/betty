@@ -14,7 +14,7 @@ import (
 	"github.com/mhutchinson/tlog-lite/log/writer"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -36,6 +36,9 @@ func New(connection string, params log.Params, batchMaxAge time.Duration, parseC
 	if err != nil {
 		panic(err)
 	}
+	db.SetConnMaxLifetime(time.Minute * 3)
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8)
 	if err := db.Ping(); err != nil {
 		panic(err)
 	}
@@ -84,39 +87,41 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index uint64) ([]byte, err
 // sequenced entries are contiguous from the zeroth entry (i.e left-hand dense).
 // We try to minimise the number of partially complete entry bundles by writing entries in chunks rather
 // than one-by-one.
-func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, error) {
+func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64, int, error) {
+	if len(batch.Entries) == 0 {
+		return 0, 0, nil
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
 		ReadOnly: false,
 	})
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
+	startTime := time.Now()
 	defer func() {
 		if err := tx.Rollback(); err != nil {
 			klog.V(2).Infof("Error rolling back TX: %v", err)
 		}
 	}()
 
-	cp, err := s.ReadCheckpoint()
-	if err != nil {
-		return 0, err
+	row := tx.QueryRow("SELECT Note FROM Checkpoint WHERE Id = ?", checkpointID)
+	var cp []byte
+	if err := row.Scan(&cp); err != nil {
+		return 0, 0, fmt.Errorf("failed to read checkpoint: %v", err)
 	}
 	size, err := s.parseCheckpoint(cp)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-
-	if len(batch.Entries) == 0 {
-		return 0, nil
-	}
-	seq := size
-	bundleIndex, entriesInBundle := seq/uint64(s.params.EntryBundleSize), seq%uint64(s.params.EntryBundleSize)
+	bundleIndex, entriesInBundle := size/uint64(s.params.EntryBundleSize), size%uint64(s.params.EntryBundleSize)
+	idealNexBatch := s.params.EntryBundleSize - int(entriesInBundle)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
+		klog.V(2).Infof("Bundle sizes not aligned, need to read %d leaves", entriesInBundle)
 		row := tx.QueryRow("SELECT Data FROM TiledLeaves WHERE TileIdx = ?", bundleIndex)
 		var part []byte
 		if err := row.Scan(&part); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		bundle.Write(part)
 	}
@@ -129,7 +134,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 			//  This bundle is full, so we need to write it out...
 			_, err := tx.ExecContext(ctx, "REPLACE INTO TiledLeaves (TileIdx, Data) VALUES (?, ?)", bundleIndex, bundle.Bytes())
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 
 			// ... and prepare the next entry bundle for any remaining entries in the batch
@@ -143,17 +148,18 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if entriesInBundle > 0 {
 		_, err := tx.ExecContext(ctx, "REPLACE INTO TiledLeaves (TileIdx, Data) VALUES (?, ?)", bundleIndex, bundle.Bytes())
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 	// For simplicitly, we'll in-line the integration of these new entries into the Merkle structure too.
-	if err := s.doIntegrateTx(ctx, tx, seq, batch.Entries); err != nil {
-		return 0, err
+	if err := s.doIntegrateTx(ctx, tx, size, batch.Entries); err != nil {
+		return 0, 0, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return seq, nil
+	klog.V(1).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
+	return size, idealNexBatch, nil
 }
 
 type transactionalStorage struct {
@@ -293,4 +299,8 @@ func (s *Storage) ReadCheckpoint() ([]byte, error) {
 	row := s.db.QueryRow("SELECT Note FROM Checkpoint WHERE Id = ?", checkpointID)
 	var cp []byte
 	return cp, row.Scan(&cp)
+}
+
+func (s *Storage) String() string {
+	return fmt.Sprintf("Total time blocked on awaiting DB connections: %s", s.db.Stats().WaitDuration)
 }

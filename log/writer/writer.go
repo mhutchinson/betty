@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 type Batch struct {
@@ -11,9 +13,9 @@ type Batch struct {
 }
 
 // SequenceFunc knows how to assign contiguous sequence numbers to the entries in Batch.
-// Returns the sequence number of the first entry, or an error.
+// Returns the sequence number of the first entry and a hint for ideal next batch size, or an error.
 // Must not return successfully until the assigned sequence numbers are durably stored.
-type SequenceFunc func(context.Context, Batch) (uint64, error)
+type SequenceFunc func(context.Context, Batch) (uint64, int, error)
 
 func NewPool(bufferSize int, maxAge time.Duration, s SequenceFunc) *Pool {
 	return &Pool{
@@ -50,9 +52,14 @@ func (p *Pool) Add(e []byte) (uint64, error) {
 			p.flushWithLock()
 		})
 	}
-	n := b.Add(e)
+	n := b.add(e)
 	// If the batch is full, then attempt to sequence it immediately.
 	if n >= p.bufferSize {
+		p.flushWithLock()
+	} else if b.hintMaxSize > 0 && n == b.hintMaxSize {
+		// TODO(mhutchinson): Move scheduling down a layer into the storage rather
+		// than passing up hints that affect pool flushing schedules.
+		klog.V(1).Infof("Flushing early to align with hint %d", b.hintMaxSize)
 		p.flushWithLock()
 	}
 	p.Unlock()
@@ -73,19 +80,22 @@ func (p *Pool) flushWithLock() {
 		Done: make(chan struct{}),
 	}
 	go func() {
-		b.FirstSeq, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
+		var idealNext int
+		b.FirstSeq, idealNext, b.Err = p.seq(context.TODO(), Batch{Entries: b.Entries})
+		p.current.hintMaxSize = idealNext
 		close(b.Done)
 	}()
 }
 
 type batch struct {
-	Entries  [][]byte
-	Done     chan struct{}
-	FirstSeq uint64
-	Err      error
+	Entries     [][]byte
+	Done        chan struct{}
+	FirstSeq    uint64
+	Err         error
+	hintMaxSize int
 }
 
-func (b *batch) Add(e []byte) int {
+func (b *batch) add(e []byte) int {
 	b.Entries = append(b.Entries, e)
 	return len(b.Entries)
 }
