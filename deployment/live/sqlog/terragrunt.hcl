@@ -14,7 +14,7 @@ remote_state {
   config = {
     project  = local.project_id
     location = local.region
-    bucket   = "${local.project_id}-serving-${local.env}-terraform-state"
+    bucket   = "${local.project_id}-serving-${local.env}-tfstate"
     prefix   = "${path_relative_to_include()}/terraform.tfstate"
 
     gcs_bucket_labels = {
