@@ -15,18 +15,18 @@
  */
 
 output "artifact_registry_id" {
-  description = "The ID of the created artifact registry for distributor docker images"
-  value       = google_artifact_registry_repository.distributor_docker.id
+  description = "The ID of the created artifact registry for sqlog docker images"
+  value       = google_artifact_registry_repository.sqlog_docker.id
 }
 
 output "artifact_registry_name" {
-  description = "The name of the created artifact registry for distributor docker images"
-  value       = google_artifact_registry_repository.distributor_docker.name
+  description = "The name of the created artifact registry for sqlog docker images"
+  value       = google_artifact_registry_repository.sqlog_docker.name
 }
 
 output "cloudbuild_trigger_id" {
   description = "The ID of the created trigger for building images"
-  value       = google_cloudbuild_trigger.distributor_docker.id
+  value       = google_cloudbuild_trigger.sqlog_docker.id
 }
 
 output "docker_image" {

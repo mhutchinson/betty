@@ -6,7 +6,7 @@ include "root" {
 inputs = merge(
   include.root.locals,
   {
-    cloud_run_service   = "distributor-service-dev"
+    cloud_run_service   = "sqlog-service-dev"
   }
 )
 
