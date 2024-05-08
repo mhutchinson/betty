@@ -18,3 +18,12 @@ go install -tags mysql github.com/golang-migrate/migrate/v4/cmd/migrate@v4.17.1
 docker compose up -d
 migrate -database 'mysql://user:password@tcp(localhost:42006)/litelog' -source file:///`pwd`/storage/tsql/migrations up
 ```
+
+## Performance
+
+Running using the `docker compose` script provided on a modest desktop, the [hammer](https://github.com/transparency-dev/serverless-log/tree/main/hammer) was able to sustain the following read/write traffic without hitting bottlenecks:
+
+```
+Read: Current max: 120000/s. Oversupply in last second: 0
+Write: Current max: 21212/s. Oversupply in last second: 0
+```

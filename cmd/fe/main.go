@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/go/cloudsqlconn"
+	"github.com/go-sql-driver/mysql"
 	"github.com/mhutchinson/tlog-lite/log"
 	"github.com/mhutchinson/tlog-lite/storage/tsql"
 	f_log "github.com/transparency-dev/formats/log"
@@ -21,9 +25,10 @@ import (
 )
 
 var (
-	sqlConnString = flag.String("mysql_uri", "user:password@tcp(db:3306)/litelog", "Connection string for a MySQL database")
-	batchSize     = flag.Int("batch_size", 1, "Size of batch before flushing")
-	batchMaxAge   = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
+	mysqlURI    = flag.String("mysql_uri", "user:password@tcp(db:3306)/litelog", "Connection string for a MySQL database")
+	useCloudSql = flag.Bool("use_cloud_sql", false, "Set to true to set up the DB connection using cloudsql connection. This will ignore mysql_uri and generate it from env variables.")
+	batchSize   = flag.Int("batch_size", 1, "Size of batch before flushing")
+	batchMaxAge = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 
 	listen = flag.String("listen", ":2024", "Address:port to listen on")
 
@@ -78,10 +83,11 @@ func main() {
 	flag.Parse()
 	ctx := context.Background()
 
+	db := getDatabaseOrDie()
 	sKey, vKey := keysFromFlag()
 	parse := parseCheckpoint(vKey)
 	create := newTree(sKey)
-	s := tsql.New(*sqlConnString, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, parse, create)
+	s := tsql.New(db, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, parse, create)
 
 	if _, err := s.ReadCheckpoint(); err != nil {
 		klog.Infof("ct: %v", err)
@@ -105,14 +111,22 @@ func main() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		defer r.Body.Close()
+		defer func() {
+			if err := r.Body.Close(); err != nil {
+				klog.Warning(err)
+			}
+		}()
 		idx, err := s.Sequence(ctx, b)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(fmt.Sprintf("Failed to sequence entry: %v", err)))
+			if _, err := w.Write([]byte(fmt.Sprintf("Failed to sequence entry: %v", err))); err != nil {
+				klog.Error(err)
+			}
 			return
 		}
-		w.Write([]byte(fmt.Sprintf("%d\n", idx)))
+		if _, err := w.Write([]byte(fmt.Sprintf("%d\n", idx))); err != nil {
+			klog.Error(err)
+		}
 	})
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
 		cp, err := s.ReadCheckpoint()
@@ -121,37 +135,49 @@ func main() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		w.Write(cp)
+		if _, err := w.Write(cp); err != nil {
+			klog.Error(err)
+		}
 	})
 	http.HandleFunc("GET /tile/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		path := r.PathValue("path")
 		level, index, _, err := parseTilePath(path)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(fmt.Sprintf("Failed to parse tile path: %v", err)))
+			if _, err := w.Write([]byte(fmt.Sprintf("Failed to parse tile path: %v", err))); err != nil {
+				klog.Error(err)
+			}
 			return
 		}
 		tile, err := s.GetTile(r.Context(), level, index)
 		if err != nil {
 			klog.Errorf("/tile/%s: %v", path, err)
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
+			if _, err := w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err))); err != nil {
+				klog.Error(err)
+			}
 			return
 		}
 		b, err := tile.MarshalText()
 		if err != nil {
 			klog.Errorf("/tile/%s: %v", path, err)
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
+			if _, err := w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err))); err != nil {
+				klog.Error(err)
+			}
 			return
 		}
-		w.Write(b)
+		if _, err := w.Write(b); err != nil {
+			klog.Error(err)
+		}
 	})
 	http.HandleFunc("GET /seq/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		path := "/" + r.PathValue("path")
 		if path[0] != os.PathSeparator || path[3] != os.PathSeparator || path[6] != os.PathSeparator || path[9] != os.PathSeparator || path[12] != os.PathSeparator {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Failed to parse seq path"))
+			if _, err := w.Write([]byte("Failed to parse seq path")); err != nil {
+				klog.Error(err)
+			}
 			return
 		}
 		var b strings.Builder
@@ -161,23 +187,81 @@ func main() {
 		index, err := strconv.ParseUint(b.String(), 16, 64)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Failed to parse seq path"))
+			if _, err := w.Write([]byte("Failed to parse seq path")); err != nil {
+				klog.Error(err)
+			}
 			return
 		}
 		tile, err := s.GetEntryBundle(r.Context(), index)
 		if err != nil {
 			klog.Errorf("/seq%s (%d): %v", path, index, err)
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err)))
+			if _, err := w.Write([]byte(fmt.Sprintf("Failed to get tile: %v", err))); err != nil {
+				klog.Error(err)
+			}
 			return
 		}
-		w.Write(tile)
+		if _, err := w.Write(tile); err != nil {
+			klog.Error(err)
+		}
 	})
 
 	go printStats(ctx, s, parse, l)
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)
 	}
+}
+
+func getDatabaseOrDie() *sql.DB {
+	if *useCloudSql {
+		return getCloudSqlOrDie()
+	}
+	if len(*mysqlURI) == 0 {
+		klog.Exitf("mysql_uri is required")
+	}
+	klog.Infof("Connecting to DB at %q", *mysqlURI)
+	db, err := sql.Open("mysql", *mysqlURI)
+	if err != nil {
+		klog.Exitf("Failed to connect to DB: %v", err)
+	}
+	db.SetConnMaxLifetime(time.Minute * 3)
+	db.SetMaxOpenConns(64)
+	db.SetMaxIdleConns(64)
+	return db
+}
+
+func getCloudSqlOrDie() *sql.DB {
+	mustGetenv := func(k string) string {
+		v := os.Getenv(k)
+		if v == "" {
+			klog.Exitf("Failed precondition: %s environment variable not set.", k)
+		}
+		return v
+	}
+	var (
+		dbUser                 = mustGetenv("DB_USER")                  // e.g. 'my-db-user'
+		dbPwd                  = mustGetenv("DB_PASS")                  // e.g. 'my-db-password'
+		dbName                 = mustGetenv("DB_NAME")                  // e.g. 'my-database'
+		instanceConnectionName = mustGetenv("INSTANCE_CONNECTION_NAME") // e.g. 'project:region:instance'
+	)
+
+	d, err := cloudsqlconn.NewDialer(context.Background())
+	if err != nil {
+		klog.Exitf("cloudsqlconn.NewDialer: %v", err)
+	}
+	var opts []cloudsqlconn.DialOption
+	mysql.RegisterDialContext("cloudsqlconn",
+		func(ctx context.Context, addr string) (net.Conn, error) {
+			return d.Dial(ctx, instanceConnectionName, opts...)
+		})
+
+	dbURI := fmt.Sprintf("%s:%s@cloudsqlconn(localhost:3306)/%s", dbUser, dbPwd, dbName)
+
+	dbPool, err := sql.Open("mysql", dbURI)
+	if err != nil {
+		klog.Exitf("sql.Open: %v", err)
+	}
+	return dbPool
 }
 
 // parseTilePath is the opposite of layout.TilePath().

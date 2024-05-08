@@ -19,11 +19,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-const (
-	dirPerm  = 0o755
-	filePerm = 0o644
-)
-
 // CreateCheckpointFunc is the signature of a function that creates a new checkpoint for the given size and hash.
 type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
 
@@ -31,14 +26,7 @@ type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
 type ParseCheckpointFunc func([]byte) (uint64, error)
 
 // New creates a new SQL storage.
-func New(connection string, params log.Params, batchMaxAge time.Duration, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) *Storage {
-	db, err := sql.Open("mysql", connection)
-	if err != nil {
-		panic(err)
-	}
-	db.SetConnMaxLifetime(time.Minute * 3)
-	db.SetMaxOpenConns(64)
-	db.SetMaxIdleConns(64)
+func New(db *sql.DB, params log.Params, batchMaxAge time.Duration, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) *Storage {
 	if err := db.Ping(); err != nil {
 		panic(err)
 	}
@@ -60,8 +48,6 @@ type Storage struct {
 	params log.Params
 	db     *sql.DB
 	pool   *writer.Pool
-
-	cpFile *os.File
 
 	parseCheckpoint  ParseCheckpointFunc
 	createCheckpoint CreateCheckpointFunc
