@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -113,13 +113,13 @@ module "private-service-access" {
 }
 
 locals {
-  dbname = "distributor"
-  dbuser = "distributor-app"
+  dbname = "sqlog"
+  dbuser = "sqlog-app"
 }
 
 module "safer-mysql-db" {
   source               = "GoogleCloudPlatform/sql-db/google//modules/safer_mysql"
-  name                 = "distributor-mysql-${var.env}-instance-1"
+  name                 = "sqlog-mysql-${var.env}-instance-1"
   random_instance_name = true
   project_id           = var.project_id
 
@@ -182,15 +182,15 @@ resource "google_project_iam_member" "iam_secret_accessor" {
 }
 
 resource "google_cloud_run_v2_service" "default" {
-  name         = "distributor-service-${var.env}"
+  name         = "sqlog-service-${var.env}"
   location     = var.region
   launch_stage = "GA"
 
   template {
     service_account = google_service_account.cloudrun_service_account.email
     containers {
-      image = var.distributor_docker_image
-      name  = "distributor"
+      image = var.sqlog_docker_image
+      name  = "sqlog"
       args  = concat([
         "--logtostderr",
         "--v=1",
@@ -238,11 +238,11 @@ resource "google_cloud_run_v2_service" "default" {
         mount_path = "/cloudsql"
       }
     }
-    containers {
-      image = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.0.0"
-      name  = "collector"
-      depends_on = ["distributor"]
-    }
+    # containers {
+    #   image = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.0.0"
+    #   name  = "collector"
+    #   depends_on = ["sqlog"]
+    # }
     volumes {
       name = "cloudsql"
       cloud_sql_instance {
@@ -263,12 +263,13 @@ resource "google_cloud_run_v2_service" "default" {
   ]
 }
 
-resource "google_cloud_run_service_iam_binding" "default" {
-  location = google_cloud_run_v2_service.default.location
-  service  = google_cloud_run_v2_service.default.name
-  role     = "roles/run.invoker"
-  members = [
-    "allUsers"
-  ]
-}
-
+# Can't make this public
+# resource "google_cloud_run_service_iam_binding" "default" {
+#   location = google_cloud_run_v2_service.default.location
+#   service  = google_cloud_run_v2_service.default.name
+#   role     = "roles/run.invoker"
+#   members = [
+#     "allUsers"
+#   ]
+# }
+#

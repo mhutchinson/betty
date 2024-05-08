@@ -1,13 +1,11 @@
 terraform {
-  source = "${get_repo_root()}/deployment/modules/distributor"
+  source = "${get_repo_root()}/deployment/modules/sqlog"
 }
 
 locals {
-  project_id  = "checkpoint-distributor"
+  project_id  = "mhutchinson-tlog-lite"
   region      = "us-central1"
   env         = path_relative_to_include()
-  witnesses_raw = yamldecode(file("${get_repo_root()}/config/witnesses-${local.env}.yaml"))
-  witnessArgs   = [for w in local.witnesses_raw.Witnesses : "--witkey=${w}"]
 }
 
 remote_state {

@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ output "mysql_conn" {
   value       = module.safer-mysql-db.instance_connection_name
 }
 
-output "distributor_uri" {
+output "sqlog_uri" {
   description = "The main URI in which this Service is serving traffic."
   value       = google_cloud_run_v2_service.default.uri
 }

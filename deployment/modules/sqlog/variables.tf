@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,13 +29,13 @@ variable "env" {
   type        = string
 }
 
-variable "distributor_docker_image" {
-  description = "The full image URL (path & tag) for the distributor docker image to deploy"
+variable "sqlog_docker_image" {
+  description = "The full image URL (path & tag) for the sqlog docker image to deploy"
   type        = string
 }
 
 variable "extra_args" {
-  description = "Extra arguments to be provided to the distributor invoked in cloud run"
+  description = "Extra arguments to be provided to the sqlog invoked in cloud run"
   type        = list(string)
   default     = []
 }
