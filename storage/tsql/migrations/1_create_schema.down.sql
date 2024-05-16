@@ -4,3 +4,5 @@ DROP TABLE IF EXISTS Subtree;
 
 DROP TABLE IF EXISTS TiledLeaves;
 
+DROP TABLE IF EXISTS HashIndex;
+

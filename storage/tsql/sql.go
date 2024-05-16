@@ -3,10 +3,13 @@ package tsql
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +21,8 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 )
+
+var errNotFound = errors.New("Row not found")
 
 // CreateCheckpointFunc is the signature of a function that creates a new checkpoint for the given size and hash.
 type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
@@ -56,6 +61,17 @@ type Storage struct {
 // Sequence commits to sequence numbers for an entry
 // Returns the sequence number assigned to the first entry in the batch, or an error.
 func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
+	// If the value is already stored then return its index
+	i, err := s.getIndex(ctx, b)
+	if err == nil {
+		return i, nil
+	}
+	if err != errNotFound {
+		return 0, err
+	}
+
+	// It isn't already persisted, but it could be in-flight at the same time
+	// TODO(mhutchinson): Set up a data structure for duplicate checking for in-flight
 	return s.pool.Add(b)
 }
 
@@ -111,8 +127,10 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		}
 		bundle.Write(part)
 	}
+	index := newIndexBuilder(size, len(batch.Entries))
 	// Add new entries to the bundle
 	for _, e := range batch.Entries {
+		index.add(e)
 		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
 		bundle.WriteString("\n")
 		entriesInBundle++
@@ -137,6 +155,9 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 			return 0, 0, err
 		}
 	}
+	if _, err := tx.ExecContext(ctx, index.createInsertStmt(), index.createInsertValues()...); err != nil {
+		return 0, 0, err
+	}
 	// For simplicitly, we'll in-line the integration of these new entries into the Merkle structure too.
 	if err := s.doIntegrateTx(ctx, tx, size, batch.Entries); err != nil {
 		return 0, 0, err
@@ -146,6 +167,45 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	}
 	klog.V(2).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
 	return size, idealNexBatch, nil
+}
+
+func newIndexBuilder(start uint64, size int) *indexBuilder {
+	return &indexBuilder{
+		start:   start,
+		current: 0,
+		hashes:  make([][]byte, size),
+		indices: make([]uint64, size),
+	}
+}
+
+type indexBuilder struct {
+	start   uint64
+	current int
+	hashes  [][]byte
+	indices []uint64
+}
+
+func (b *indexBuilder) add(e []byte) {
+	hash := sha256.Sum256(e)
+	b.hashes[b.current] = hash[:]
+	b.indices[b.current] = b.start + uint64(b.current)
+	b.current++
+}
+
+func (b *indexBuilder) createInsertStmt() string {
+	placeholders := strings.Repeat("(?, ?), ", len(b.hashes)-1)
+	placeholders += "(?, ?)"
+	// Use IGNORE in case there are duplicates, then the first hash wins
+	return fmt.Sprintf("INSERT IGNORE INTO HashIndex (Hash, Idx) VALUES %s", placeholders)
+}
+
+func (b *indexBuilder) createInsertValues() []any {
+	values := make([]any, 2*len(b.hashes))
+	for i := 0; i < len(b.hashes); i++ {
+		values[2*i] = b.hashes[i]
+		values[2*i+1] = b.indices[i]
+	}
+	return values
 }
 
 type transactionalStorage struct {
@@ -205,6 +265,19 @@ func (s *Storage) GetTile(ctx context.Context, level, index uint64) (*api.Tile, 
 		return tile, err
 	}
 	return tile, tx.Commit()
+}
+
+func (s *Storage) getIndex(ctx context.Context, data []byte) (uint64, error) {
+	hash := sha256.Sum256(data)
+	row := s.db.QueryRowContext(ctx, "SELECT Idx FROM HashIndex WHERE Hash = ?", hash[:])
+	var index uint64
+	if err := row.Scan(&index); err != nil {
+		if err != sql.ErrNoRows {
+			return 0, err
+		}
+		return 0, errNotFound
+	}
+	return index, nil
 }
 
 func (s *Storage) getTileTx(ctx context.Context, tx *sql.Tx, level, index uint64) (*api.Tile, error) {

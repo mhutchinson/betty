@@ -18,3 +18,9 @@ CREATE TABLE IF NOT EXISTS TiledLeaves(
   PRIMARY KEY(TileIdx)
 );
 
+CREATE TABLE IF NOT EXISTS HashIndex(
+  Hash                 BINARY(32) NOT NULL,
+  Idx                  BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY(Hash)
+);
+
