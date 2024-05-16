@@ -106,7 +106,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		}
 	}()
 
-	row := tx.QueryRow("SELECT Note FROM Checkpoint WHERE Id = ?", checkpointID)
+	row := tx.QueryRow("SELECT Note FROM Checkpoint WHERE Id = ? FOR UPDATE", checkpointID)
 	var cp []byte
 	if err := row.Scan(&cp); err != nil {
 		return 0, 0, fmt.Errorf("failed to read checkpoint: %v", err)
