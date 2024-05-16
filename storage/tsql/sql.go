@@ -106,6 +106,11 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 		}
 	}()
 
+	// This makes things slow, but it's necessary for how things currently work
+	// To make this faster:
+	//  - Separate sequencing and integration
+	//  - Use auto increment on to-be-sequenced table: https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
+	//  - Have the integrator run periodically, and SELECT FOR UPDATE on the checkpoint before integrating
 	row := tx.QueryRow("SELECT Note FROM Checkpoint WHERE Id = ? FOR UPDATE", checkpointID)
 	var cp []byte
 	if err := row.Scan(&cp); err != nil {
