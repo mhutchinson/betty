@@ -170,7 +170,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if err := tx.Commit(); err != nil {
 		return 0, 0, err
 	}
-	klog.V(2).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
+	klog.V(1).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
 	return size, idealNexBatch, nil
 }
 

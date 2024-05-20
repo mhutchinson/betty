@@ -215,6 +215,8 @@ resource "google_cloud_run_v2_service" "default" {
         "--v=1",
         "--use_cloud_sql",
         "--print_latency=false",
+        "--batch_size=256",
+        "--batch_max_age=1s",
         "--listen=:8080",
       ], var.extra_args)
       ports {
@@ -258,6 +260,10 @@ resource "google_cloud_run_v2_service" "default" {
         name       = "cloudsql"
         mount_path = "/cloudsql"
       }
+    }
+    max_instance_request_concurrency = 256
+    scaling {
+      max_instance_count = 3
     }
     # containers {
     #   image = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.0.0"
