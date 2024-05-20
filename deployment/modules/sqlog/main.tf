@@ -146,7 +146,7 @@ module "safer-mysql-db" {
   database_version = "MYSQL_8_0"
   region           = var.region
   zone             = "${var.region}-c"
-  tier             = "db-n1-standard-1"
+  tier             = "db-custom-4-7680" # 4 CPUs, but memory of db-n1-standard-2
   assign_public_ip = "true"
   vpc_network      = module.network-safer-mysql-simple.network_self_link
 
