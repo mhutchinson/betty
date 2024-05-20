@@ -25,10 +25,11 @@ import (
 )
 
 var (
-	mysqlURI    = flag.String("mysql_uri", "user:password@tcp(db:3306)/litelog", "Connection string for a MySQL database")
-	useCloudSql = flag.Bool("use_cloud_sql", false, "Set to true to set up the DB connection using cloudsql connection. This will ignore mysql_uri and generate it from env variables.")
-	batchSize   = flag.Int("batch_size", 1, "Size of batch before flushing")
-	batchMaxAge = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
+	mysqlURI     = flag.String("mysql_uri", "user:password@tcp(db:3306)/litelog", "Connection string for a MySQL database")
+	useCloudSql  = flag.Bool("use_cloud_sql", false, "Set to true to set up the DB connection using cloudsql connection. This will ignore mysql_uri and generate it from env variables.")
+	batchSize    = flag.Int("batch_size", 1, "Size of batch before flushing")
+	batchMaxAge  = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
+	printLatency = flag.Bool("print_latency", true, "Set to false to disable printing periodic latency stats")
 
 	listen = flag.String("listen", ":2024", "Address:port to listen on")
 
@@ -206,7 +207,9 @@ func main() {
 		}
 	})
 
-	go printStats(ctx, s, parse, l)
+	if *printLatency {
+		go printStats(ctx, s, parse, l)
+	}
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)
 	}

@@ -214,6 +214,7 @@ resource "google_cloud_run_v2_service" "default" {
         "--logtostderr",
         "--v=1",
         "--use_cloud_sql",
+        "--print_latency=false",
         "--listen=:8080",
       ], var.extra_args)
       ports {
