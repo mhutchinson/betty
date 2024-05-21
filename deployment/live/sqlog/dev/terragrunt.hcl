@@ -6,7 +6,7 @@ include "root" {
 inputs = merge(
   include.root.locals,
   {
-    sqlog_docker_image = "us-central1-docker.pkg.dev/mhutchinson-tlog-lite/sqlog-docker-dev/sqlog:latest"
+    sqlog_docker_image = "us-central1-docker.pkg.dev/${include.root.locals.project_id}/sqlog-docker-dev/sqlog:latest"
   }
 )
 

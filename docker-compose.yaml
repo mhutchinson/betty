@@ -25,6 +25,7 @@ services:
       "--mysql_uri=${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(db:3306)/${MYSQL_DATABASE}",
       "--batch_size=256",
       "--batch_max_age=1s",
+      "--print_latency=false",
     ]
     restart: always
     depends_on:
