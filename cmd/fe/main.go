@@ -19,6 +19,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/mhutchinson/tlog-lite/log"
 	"github.com/mhutchinson/tlog-lite/storage/tsql"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	f_log "github.com/transparency-dev/formats/log"
 	"golang.org/x/mod/sumdb/note"
 	"k8s.io/klog/v2"
@@ -31,10 +34,47 @@ var (
 	batchMaxAge  = flag.Duration("batch_max_age", 100*time.Millisecond, "Max age for batch entries before flushing")
 	printLatency = flag.Bool("print_latency", true, "Set to false to disable printing periodic latency stats")
 
-	listen = flag.String("listen", ":2024", "Address:port to listen on")
+	listen     = flag.String("listen", ":2024", "Address:port to listen on")
+	exportProm = flag.Bool("export_prometheus", true, "Set to false to disable prometheus handler from being exported at /metrics.")
 
 	signer   = flag.String("log_signer", "PRIVATE+KEY+Test-Betty+df84580a+Afge8kCzBXU7jb3cV2Q363oNXCufJ6u9mjOY1BGRY9E2", "Log signer")
 	verifier = flag.String("log_verifier", "Test-Betty+df84580a+AQQASqPUZoIHcJAF5mBOryctwFdTV1E0GRY4kEAtTzwB", "log verifier")
+
+	counterGetLeafRequest = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_get_leaf_request",
+		Help: "The total number of requests to get a leaf tile",
+	})
+	counterGetLeafSuccess = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_get_leaf_success",
+		Help: "The total number of successful requests to get a leaf tile",
+	})
+
+	counterAddLeafRequest = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_add_leaf_request",
+		Help: "The total number of requests to add a leaf",
+	})
+	counterAddLeafSuccess = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_add_leaf_success",
+		Help: "The total number of successful requests to add a leaf",
+	})
+
+	counterGetTileRequest = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_get_tile_request",
+		Help: "The total number of requests to get an internal tile",
+	})
+	counterGetTileSuccess = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_get_tile_success",
+		Help: "The total number of successful requests to get an internal tile",
+	})
+
+	counterGetCheckpointRequest = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_get_checkpoint_request",
+		Help: "The total number of requests to get a checkpoint",
+	})
+	counterGetCheckpointSuccess = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "tloglitemysql_http_handler_get_checkpoint_success",
+		Help: "The total number of successful requests to get a checkpoint",
+	})
 )
 
 type latency struct {
@@ -103,7 +143,11 @@ func main() {
 
 	l := &latency{}
 
+	if *exportProm {
+		http.Handle("GET /metrics", promhttp.Handler())
+	}
 	http.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
+		counterAddLeafRequest.Inc()
 		n := time.Now()
 		defer func() { l.Add(time.Since(n)) }()
 
@@ -127,9 +171,12 @@ func main() {
 		}
 		if _, err := w.Write([]byte(fmt.Sprintf("%d\n", idx))); err != nil {
 			klog.Error(err)
+			return
 		}
+		counterAddLeafSuccess.Inc()
 	})
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
+		counterGetCheckpointRequest.Inc()
 		cp, err := s.ReadCheckpoint()
 		if err != nil {
 			klog.Errorf("/checkpoint: %v", err)
@@ -138,9 +185,12 @@ func main() {
 		}
 		if _, err := w.Write(cp); err != nil {
 			klog.Error(err)
+			return
 		}
+		counterGetCheckpointSuccess.Inc()
 	})
 	http.HandleFunc("GET /tile/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		counterGetTileRequest.Inc()
 		path := r.PathValue("path")
 		level, index, _, err := parseTilePath(path)
 		if err != nil {
@@ -170,9 +220,12 @@ func main() {
 		}
 		if _, err := w.Write(b); err != nil {
 			klog.Error(err)
+			return
 		}
+		counterGetTileSuccess.Inc()
 	})
 	http.HandleFunc("GET /seq/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		counterGetLeafRequest.Inc()
 		path := "/" + r.PathValue("path")
 		if path[0] != os.PathSeparator || path[3] != os.PathSeparator || path[6] != os.PathSeparator || path[9] != os.PathSeparator || path[12] != os.PathSeparator {
 			w.WriteHeader(http.StatusBadRequest)
@@ -204,7 +257,9 @@ func main() {
 		}
 		if _, err := w.Write(tile); err != nil {
 			klog.Error(err)
+			return
 		}
+		counterGetLeafSuccess.Inc()
 	})
 
 	if *printLatency {

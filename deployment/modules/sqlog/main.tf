@@ -265,11 +265,11 @@ resource "google_cloud_run_v2_service" "default" {
     scaling {
       max_instance_count = 3
     }
-    # containers {
-    #   image = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.0.0"
-    #   name  = "collector"
-    #   depends_on = ["sqlog"]
-    # }
+    containers {
+      image      = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.0.0"
+      name       = "collector"
+      depends_on = ["sqlog"]
+    }
     volumes {
       name = "cloudsql"
       cloud_sql_instance {
