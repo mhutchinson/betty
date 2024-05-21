@@ -15,6 +15,8 @@ import (
 
 	"github.com/mhutchinson/tlog-lite/log"
 	"github.com/mhutchinson/tlog-lite/log/writer"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/transparency-dev/merkle/rfc6962"
 	"github.com/transparency-dev/serverless-log/api"
 	"k8s.io/klog/v2"
@@ -22,7 +24,15 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-var errNotFound = errors.New("Row not found")
+var (
+	errNotFound = errors.New("Row not found")
+
+	histogramSequenceBatchSize = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "tloglitemysql_sequence_batch_size",
+		Help:    "The batch sizes passed to sequenceBatch",
+		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
+	})
+)
 
 // CreateCheckpointFunc is the signature of a function that creates a new checkpoint for the given size and hash.
 type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
@@ -93,6 +103,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if len(batch.Entries) == 0 {
 		return 0, 0, nil
 	}
+	histogramSequenceBatchSize.Observe(float64(len(batch.Entries)))
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
 		ReadOnly: false,
 	})
