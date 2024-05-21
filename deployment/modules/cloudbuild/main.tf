@@ -74,20 +74,20 @@ resource "google_cloudbuild_trigger" "sqlog_docker" {
         local.docker_image
       ]
     }
-    # # Deploy container image to Cloud Run
-    # step {
-    #   name       = "gcr.io/google.com/cloudsdktool/cloud-sdk"
-    #   entrypoint = "gcloud"
-    #   args = [
-    #     "run",
-    #     "deploy",
-    #     var.cloud_run_service,
-    #     "--image",
-    #     "${local.docker_image}:$SHORT_SHA",
-    #     "--region",
-    #     var.region
-    #   ]
-    # }
+    # Deploy container image to Cloud Run
+    step {
+      name       = "gcr.io/google.com/cloudsdktool/cloud-sdk"
+      entrypoint = "gcloud"
+      args = [
+        "run",
+        "deploy",
+        var.cloud_run_service,
+        "--image",
+        "${local.docker_image}:$SHORT_SHA",
+        "--region",
+        var.region
+      ]
+    }
     options {
       logging = "CLOUD_LOGGING_ONLY"
     }

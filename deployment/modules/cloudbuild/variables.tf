@@ -29,8 +29,8 @@ variable "env" {
   type        = string
 }
 
-# variable "cloud_run_service" {
-#   description = "The name of the cloud run service that new images should be pushed to"
-#   type        = string
-# }
-#
+variable "cloud_run_service" {
+  description = "The name of the cloud run service that new images should be pushed to"
+  type        = string
+}
+
