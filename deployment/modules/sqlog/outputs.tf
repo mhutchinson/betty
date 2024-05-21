@@ -19,6 +19,17 @@ output "mysql_conn" {
   value       = module.safer-mysql-db.instance_connection_name
 }
 
+output "mysql_proxy_command" {
+  description = "The cloudproxy command to allow local mysql connections"
+  value       = "cloud-sql-proxy ${module.safer-mysql-db.instance_connection_name} --port 6000"
+}
+
+output "mysql_migrate_command" {
+  description = "The command to create the DB schemas using cloudproxy connection"
+  value       = "migrate -database 'mysql://sqlog-app:${random_password.db_user_pwd.result}@tcp(localhost:6000)/sqlog' -source file:///`pwd`/storage/tsql/migrations up"
+  sensitive   = true
+}
+
 output "sqlog_uri" {
   description = "The main URI in which this Service is serving traffic."
   value       = var.skip_fe ? "" : google_cloud_run_v2_service.default[0].uri
