@@ -131,21 +131,44 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if err != nil {
 		return 0, 0, err
 	}
-	bundleIndex, entriesInBundle := size/uint64(s.params.EntryBundleSize), size%uint64(s.params.EntryBundleSize)
-	idealNexBatch := s.params.EntryBundleSize - int(entriesInBundle)
+	idealNextBatch, err := s.setSequencedLeaves(ctx, tx, size, batch.Entries)
+	if err != nil {
+		return 0, 0, err
+	}
+	// For simplicity, we'll inline the integration of these new entries into the Merkle structure too.
+	if err := s.doIntegrateTx(ctx, tx, size, batch.Entries); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	klog.V(1).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
+	return size, idealNextBatch, nil
+}
+
+// setSequencedLeaves stores the leaves into the sequenced leaves starting at the given index.
+// This will overwrite any data already stored in this block and perform no checks for contiguity,
+// thus the caller should ensure that the start index and the provided leaves represents a valid
+// state transition for the log in its current state. This includes the caller being responsible for
+// locking the transaction to have exclusive ownership of at least this range of sequence values.
+// The returned int represents the number of missing values in the last tile written. This can be ignored,
+// but it can be used by the caller to align sequenced blocks of leaves to the underlying storage.
+func (s *Storage) setSequencedLeaves(ctx context.Context, tx *sql.Tx, start uint64, leaves [][]byte) (int, error) {
+	bundleIndex, entriesInBundle := start/uint64(s.params.EntryBundleSize), start%uint64(s.params.EntryBundleSize)
+	idealNextBatch := s.params.EntryBundleSize - int(entriesInBundle)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
 		klog.V(2).Infof("Bundle sizes not aligned, need to read %d leaves", entriesInBundle)
 		row := tx.QueryRow("SELECT Data FROM TiledLeaves WHERE TileIdx = ?", bundleIndex)
 		var part []byte
 		if err := row.Scan(&part); err != nil {
-			return 0, 0, err
+			return 0, err
 		}
 		bundle.Write(part)
 	}
-	index := newIndexBuilder(size, len(batch.Entries))
+	index := newIndexBuilder(start, len(leaves))
 	// Add new entries to the bundle
-	for _, e := range batch.Entries {
+	for _, e := range leaves {
 		index.add(e)
 		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
 		bundle.WriteString("\n")
@@ -154,7 +177,7 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 			//  This bundle is full, so we need to write it out...
 			_, err := tx.ExecContext(ctx, "REPLACE INTO TiledLeaves (TileIdx, Data) VALUES (?, ?)", bundleIndex, bundle.Bytes())
 			if err != nil {
-				return 0, 0, err
+				return 0, err
 			}
 
 			// ... and prepare the next entry bundle for any remaining entries in the batch
@@ -168,21 +191,13 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 	if entriesInBundle > 0 {
 		_, err := tx.ExecContext(ctx, "REPLACE INTO TiledLeaves (TileIdx, Data) VALUES (?, ?)", bundleIndex, bundle.Bytes())
 		if err != nil {
-			return 0, 0, err
+			return 0, err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, index.createInsertStmt(), index.createInsertValues()...); err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-	// For simplicitly, we'll in-line the integration of these new entries into the Merkle structure too.
-	if err := s.doIntegrateTx(ctx, tx, size, batch.Entries); err != nil {
-		return 0, 0, err
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, 0, err
-	}
-	klog.V(1).Infof("sequenceBatch time taken for %d elements: %s", len(batch.Entries), time.Since(startTime))
-	return size, idealNexBatch, nil
+	return idealNextBatch, nil
 }
 
 func newIndexBuilder(start uint64, size int) *indexBuilder {
