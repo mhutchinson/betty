@@ -17,7 +17,6 @@ import (
 
 	"cloud.google.com/go/cloudsqlconn"
 	"github.com/go-sql-driver/mysql"
-	"github.com/mhutchinson/tlog-lite/log"
 	"github.com/mhutchinson/tlog-lite/storage/tsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -128,7 +127,12 @@ func main() {
 	sKey, vKey := keysFromFlag()
 	parse := parseCheckpoint(vKey)
 	create := newTree(sKey)
-	s := tsql.New(db, log.Params{EntryBundleSize: *batchSize}, *batchMaxAge, parse, create)
+
+	tuning := tsql.TuningParams{
+		BatchMaxAge:  *batchMaxAge,
+		BatchMaxSize: *batchSize,
+	}
+	s := tsql.New(db, tuning, parse, create)
 
 	if _, err := s.ReadCheckpoint(); err != nil {
 		klog.Infof("ct: %v", err)

@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mhutchinson/tlog-lite/log"
 	"github.com/mhutchinson/tlog-lite/log/writer"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -22,6 +21,11 @@ import (
 	"k8s.io/klog/v2"
 
 	_ "github.com/go-sql-driver/mysql"
+)
+
+const (
+	// This is set by the tiles spec
+	leafBundleSize = 256
 )
 
 var (
@@ -34,6 +38,14 @@ var (
 	})
 )
 
+// TuningParams contains configuration parameters that don't affect the black box behaviour
+// of the system. These options include how long to wait before flushing a batch, and the max
+// number of entries to that can be written at a single time.
+type TuningParams struct {
+	BatchMaxAge  time.Duration
+	BatchMaxSize int
+}
+
 // CreateCheckpointFunc is the signature of a function that creates a new checkpoint for the given size and hash.
 type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
 
@@ -41,17 +53,16 @@ type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
 type ParseCheckpointFunc func([]byte) (uint64, error)
 
 // New creates a new SQL storage.
-func New(db *sql.DB, params log.Params, batchMaxAge time.Duration, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) *Storage {
+func New(db *sql.DB, params TuningParams, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) *Storage {
 	if err := db.Ping(); err != nil {
 		panic(err)
 	}
 	r := &Storage{
 		db:               db,
-		params:           params,
 		parseCheckpoint:  parseCheckpoint,
 		createCheckpoint: createCheckpoint,
 	}
-	r.pool = writer.NewPool(params.EntryBundleSize, batchMaxAge, r.sequenceBatch)
+	r.pool = writer.NewPool(params.BatchMaxSize, params.BatchMaxAge, r.sequenceBatch)
 
 	return r
 }
@@ -60,9 +71,8 @@ func New(db *sql.DB, params log.Params, batchMaxAge time.Duration, parseCheckpoi
 // It leverages the POSIX atomic operations.
 type Storage struct {
 	sync.Mutex
-	params log.Params
-	db     *sql.DB
-	pool   *writer.Pool
+	db   *sql.DB
+	pool *writer.Pool
 
 	parseCheckpoint  ParseCheckpointFunc
 	createCheckpoint CreateCheckpointFunc
@@ -154,8 +164,8 @@ func (s *Storage) sequenceBatch(ctx context.Context, batch writer.Batch) (uint64
 // The returned int represents the number of missing values in the last tile written. This can be ignored,
 // but it can be used by the caller to align sequenced blocks of leaves to the underlying storage.
 func (s *Storage) setSequencedLeaves(ctx context.Context, tx *sql.Tx, start uint64, leaves [][]byte) (int, error) {
-	bundleIndex, entriesInBundle := start/uint64(s.params.EntryBundleSize), start%uint64(s.params.EntryBundleSize)
-	idealNextBatch := s.params.EntryBundleSize - int(entriesInBundle)
+	bundleIndex, entriesInBundle := start/uint64(leafBundleSize), start%uint64(leafBundleSize)
+	idealNextBatch := leafBundleSize - int(entriesInBundle)
 	bundle := &bytes.Buffer{}
 	if entriesInBundle > 0 {
 		klog.V(2).Infof("Bundle sizes not aligned, need to read %d leaves", entriesInBundle)
@@ -173,7 +183,7 @@ func (s *Storage) setSequencedLeaves(ctx context.Context, tx *sql.Tx, start uint
 		bundle.WriteString(base64.StdEncoding.EncodeToString(e))
 		bundle.WriteString("\n")
 		entriesInBundle++
-		if entriesInBundle == uint64(s.params.EntryBundleSize) {
+		if entriesInBundle == uint64(leafBundleSize) {
 			//  This bundle is full, so we need to write it out...
 			_, err := tx.ExecContext(ctx, "REPLACE INTO TiledLeaves (TileIdx, Data) VALUES (?, ?)", bundleIndex, bundle.Bytes())
 			if err != nil {
