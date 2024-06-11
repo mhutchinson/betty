@@ -134,17 +134,6 @@ func main() {
 	}
 	s := tsql.New(db, tuning, parse, create)
 
-	if _, err := s.ReadCheckpoint(); err != nil {
-		klog.Infof("ct: %v", err)
-		if cp, err := create(0, []byte("Empty")); err != nil {
-			klog.Exitf("Failed to initialise log: %v", err)
-		} else {
-			if err := s.WriteCheckpoint(ctx, cp); err != nil {
-				klog.Exitf("Failed to write initial checkpoint: %v", err)
-			}
-		}
-	}
-
 	l := &latency{}
 
 	if *exportProm {

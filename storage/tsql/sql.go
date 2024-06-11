@@ -46,6 +46,24 @@ type TuningParams struct {
 	BatchMaxSize int
 }
 
+type LogConfig struct {
+	db               *sql.DB
+	parseCheckpoint  ParseCheckpointFunc
+	createCheckpoint CreateCheckpointFunc
+}
+
+type PreOrderedWriter interface {
+	Set(ctx context.Context, first uint64, entries [][]byte) error
+}
+
+type SequencingWriter interface {
+	Sequence(ctx context.Context, b []byte) error
+}
+
+func NewPreorderedLogWriter(config LogConfig, batchMaxAge time.Duration) {
+
+}
+
 // CreateCheckpointFunc is the signature of a function that creates a new checkpoint for the given size and hash.
 type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
 
@@ -101,6 +119,40 @@ func (s *Storage) GetEntryBundle(ctx context.Context, index uint64) ([]byte, err
 	var part []byte
 	err := row.Scan(&part)
 	return part, err
+}
+
+// GetTile returns the tile at the given tile-level and tile-index.
+// If no complete tile exists at that location, it will attempt to find a
+// partial tile for the given tree size at that location.
+func (s *Storage) GetTile(ctx context.Context, level, index uint64) (*api.Tile, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil {
+			klog.V(2).Infof("Error rolling back TX: %v", err)
+		}
+	}()
+
+	tile, err := s.getTileTx(ctx, tx, level, index)
+	if err != nil {
+		return tile, err
+	}
+	return tile, tx.Commit()
+}
+
+func (s *Storage) init(ctx context.Context) {
+	if _, err := s.ReadCheckpoint(); err != nil {
+		klog.Infof("ct: %v", err)
+		if cp, err := s.createCheckpoint(0, []byte("")); err != nil {
+			klog.Exitf("Failed to initialise log: %v", err)
+		} else {
+			if err := s.WriteCheckpoint(ctx, cp); err != nil {
+				klog.Exitf("Failed to write initial checkpoint: %v", err)
+			}
+		}
+	}
 }
 
 // sequenceBatch writes the entries from the provided batch into the entry bundle files of the log.
@@ -262,7 +314,6 @@ func (ts transactionalStorage) GetTile(ctx context.Context, level, index uint64)
 // StoreTile stores the tile at the given level & index.
 func (ts transactionalStorage) StoreTile(ctx context.Context, level, index uint64, tile *api.Tile) error {
 	return ts.s.storeTileTx(ctx, ts.tx, level, index, tile)
-
 }
 
 // doIntegrate handles integrating new entries into the log, and updating the checkpoint.
@@ -285,27 +336,6 @@ func (s *Storage) doIntegrateTx(ctx context.Context, tx *sql.Tx, from uint64, ba
 		return fmt.Errorf("writeCheckpoint: %v", err)
 	}
 	return nil
-}
-
-// GetTile returns the tile at the given tile-level and tile-index.
-// If no complete tile exists at that location, it will attempt to find a
-// partial tile for the given tree size at that location.
-func (s *Storage) GetTile(ctx context.Context, level, index uint64) (*api.Tile, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := tx.Rollback(); err != nil {
-			klog.V(2).Infof("Error rolling back TX: %v", err)
-		}
-	}()
-
-	tile, err := s.getTileTx(ctx, tx, level, index)
-	if err != nil {
-		return tile, err
-	}
-	return tile, tx.Commit()
 }
 
 func (s *Storage) getIndex(ctx context.Context, data []byte) (uint64, error) {
@@ -336,23 +366,6 @@ func (s *Storage) getTileTx(ctx context.Context, tx *sql.Tx, level, index uint64
 		return nil, fmt.Errorf("failed to parse tile: %w", err)
 	}
 	return &tile, nil
-}
-
-func (s *Storage) StoreTile(ctx context.Context, level, index uint64, tile *api.Tile) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: false})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := tx.Rollback(); err != nil {
-			klog.V(2).Infof("Error rolling back TX: %v", err)
-		}
-	}()
-	err = s.storeTileTx(ctx, tx, level, index, tile)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 
 func (s *Storage) storeTileTx(ctx context.Context, tx *sql.Tx, level, index uint64, tile *api.Tile) error {
