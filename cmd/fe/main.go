@@ -132,7 +132,7 @@ func main() {
 		BatchMaxAge:  *batchMaxAge,
 		BatchMaxSize: *batchSize,
 	}
-	s := tsql.New(db, tuning, parse, create)
+	read, sequence := tsql.NewSequencingWriter(db, tuning, parse, create)
 
 	l := &latency{}
 
@@ -154,7 +154,7 @@ func main() {
 				klog.Warning(err)
 			}
 		}()
-		idx, err := s.Sequence(ctx, b)
+		idx, err := sequence(ctx, b)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			if _, err := w.Write([]byte(fmt.Sprintf("Failed to sequence entry: %v", err))); err != nil {
@@ -170,7 +170,7 @@ func main() {
 	})
 	http.HandleFunc("GET /checkpoint", func(w http.ResponseWriter, r *http.Request) {
 		counterGetCheckpointRequest.Inc()
-		cp, err := s.ReadCheckpoint()
+		cp, err := read.ReadCheckpoint()
 		if err != nil {
 			klog.Errorf("/checkpoint: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -193,7 +193,7 @@ func main() {
 			}
 			return
 		}
-		tile, err := s.GetTile(r.Context(), level, index)
+		tile, err := read.GetTile(r.Context(), level, index)
 		if err != nil {
 			klog.Errorf("/tile/%s: %v", path, err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -239,7 +239,7 @@ func main() {
 			}
 			return
 		}
-		tile, err := s.GetEntryBundle(r.Context(), index)
+		tile, err := read.GetEntryBundle(r.Context(), index)
 		if err != nil {
 			klog.Errorf("/seq%s (%d): %v", path, index, err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -256,7 +256,7 @@ func main() {
 	})
 
 	if *printLatency {
-		go printStats(ctx, s, parse, l)
+		go printStats(ctx, read, parse, l)
 	}
 	if err := http.ListenAndServe(*listen, http.DefaultServeMux); err != nil {
 		klog.Exitf("ListenAndServe: %v", err)

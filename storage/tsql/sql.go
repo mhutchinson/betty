@@ -56,13 +56,8 @@ type PreOrderedWriter interface {
 	Set(ctx context.Context, first uint64, entries [][]byte) error
 }
 
-type SequencingWriter interface {
-	Sequence(ctx context.Context, b []byte) error
-}
-
-func NewPreorderedLogWriter(config LogConfig, batchMaxAge time.Duration) {
-
-}
+// TODO(mhutchinson): Remove the first return parameter, which is a hint for next batch size
+type SequencingWriter func(ctx context.Context, b []byte) (uint64, error)
 
 // CreateCheckpointFunc is the signature of a function that creates a new checkpoint for the given size and hash.
 type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
@@ -70,8 +65,9 @@ type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
 // ParseCheckpointFunc is the signature of a function which parses the current integrated tree size
 type ParseCheckpointFunc func([]byte) (uint64, error)
 
-// New creates a new SQL storage.
-func New(db *sql.DB, params TuningParams, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) *Storage {
+// NewSequencingWriter creates a new SQL storage that accepts writes to be added via
+// the built-in sequencer.
+func NewSequencingWriter(db *sql.DB, params TuningParams, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) (*Storage, SequencingWriter) {
 	if err := db.Ping(); err != nil {
 		panic(err)
 	}
@@ -82,7 +78,7 @@ func New(db *sql.DB, params TuningParams, parseCheckpoint ParseCheckpointFunc, c
 	}
 	r.pool = writer.NewPool(params.BatchMaxSize, params.BatchMaxAge, r.sequenceBatch)
 
-	return r
+	return r, r.sequence
 }
 
 // Storage implements storage functions for a POSIX filesystem.
@@ -96,9 +92,9 @@ type Storage struct {
 	createCheckpoint CreateCheckpointFunc
 }
 
-// Sequence commits to sequence numbers for an entry
+// sequence commits to sequence numbers for an entry
 // Returns the sequence number assigned to the first entry in the batch, or an error.
-func (s *Storage) Sequence(ctx context.Context, b []byte) (uint64, error) {
+func (s *Storage) sequence(ctx context.Context, b []byte) (uint64, error) {
 	// If the value is already stored then return its index
 	i, err := s.getIndex(ctx, b)
 	if err == nil {
