@@ -132,7 +132,7 @@ func main() {
 		BatchMaxAge:  *batchMaxAge,
 		BatchMaxSize: *batchSize,
 	}
-	read, sequence := tsql.NewSequencingWriter(db, tuning, parse, create)
+	read, sequence := tsql.NewSequencingStorage(db, tuning, parse, create)
 
 	l := &latency{}
 

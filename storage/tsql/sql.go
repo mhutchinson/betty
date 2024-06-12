@@ -57,7 +57,7 @@ type PreOrderedWriter interface {
 }
 
 // TODO(mhutchinson): Remove the first return parameter, which is a hint for next batch size
-type SequencingWriter func(ctx context.Context, b []byte) (uint64, error)
+type SequenceFunc func(ctx context.Context, b []byte) (uint64, error)
 
 // CreateCheckpointFunc is the signature of a function that creates a new checkpoint for the given size and hash.
 type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
@@ -65,9 +65,41 @@ type CreateCheckpointFunc func(size uint64, root []byte) ([]byte, error)
 // ParseCheckpointFunc is the signature of a function which parses the current integrated tree size
 type ParseCheckpointFunc func([]byte) (uint64, error)
 
-// NewSequencingWriter creates a new SQL storage that accepts writes to be added via
+// NewSequencingStorage creates a new SQL storage that accepts writes to be added via
 // the built-in sequencer.
-func NewSequencingWriter(db *sql.DB, params TuningParams, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) (*Storage, SequencingWriter) {
+func NewSequencingStorage(db *sql.DB, params TuningParams, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) (*Storage, SequenceFunc) {
+	if err := db.Ping(); err != nil {
+		panic(err)
+	}
+	s := &Storage{
+		db:               db,
+		parseCheckpoint:  parseCheckpoint,
+		createCheckpoint: createCheckpoint,
+	}
+
+	pool := writer.NewPool(params.BatchMaxSize, params.BatchMaxAge, s.sequenceBatch)
+	sequence := func(ctx context.Context, b []byte) (uint64, error) {
+		// If the value is already stored then return its index
+		i, err := s.getIndex(ctx, b)
+		if err == nil {
+			return i, nil
+		}
+		if err != errNotFound {
+			return 0, err
+		}
+
+		// It isn't already persisted, but it could be in-flight at the same time
+		// TODO(mhutchinson): Set up a data structure for duplicate checking for in-flight
+		return pool.Add(b)
+	}
+	return s, sequence
+}
+
+// NewDrainingStorage creates a new SQL storage that doesn't allow any writes, but
+// does allow for reads. If this implementation supported async integration, then
+// this storage layer would still try to perform integrations of any pending leaves
+// in the background.
+func NewDrainingStorage(db *sql.DB, _ TuningParams, parseCheckpoint ParseCheckpointFunc, createCheckpoint CreateCheckpointFunc) *Storage {
 	if err := db.Ping(); err != nil {
 		panic(err)
 	}
@@ -76,37 +108,17 @@ func NewSequencingWriter(db *sql.DB, params TuningParams, parseCheckpoint ParseC
 		parseCheckpoint:  parseCheckpoint,
 		createCheckpoint: createCheckpoint,
 	}
-	r.pool = writer.NewPool(params.BatchMaxSize, params.BatchMaxAge, r.sequenceBatch)
-
-	return r, r.sequence
+	return r
 }
 
 // Storage implements storage functions for a POSIX filesystem.
 // It leverages the POSIX atomic operations.
 type Storage struct {
 	sync.Mutex
-	db   *sql.DB
-	pool *writer.Pool
+	db *sql.DB
 
 	parseCheckpoint  ParseCheckpointFunc
 	createCheckpoint CreateCheckpointFunc
-}
-
-// sequence commits to sequence numbers for an entry
-// Returns the sequence number assigned to the first entry in the batch, or an error.
-func (s *Storage) sequence(ctx context.Context, b []byte) (uint64, error) {
-	// If the value is already stored then return its index
-	i, err := s.getIndex(ctx, b)
-	if err == nil {
-		return i, nil
-	}
-	if err != errNotFound {
-		return 0, err
-	}
-
-	// It isn't already persisted, but it could be in-flight at the same time
-	// TODO(mhutchinson): Set up a data structure for duplicate checking for in-flight
-	return s.pool.Add(b)
 }
 
 // GetEntryBundle retrieves the Nth entries bundle.
